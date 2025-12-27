@@ -11,6 +11,9 @@ max_positions: 8                  # Moins de positions = plus concentré
 risk_per_trade_pct: 0.02          # 2% du capital par trade (plus agressif)
 atr_stop_multiplier: 2.0          # Stop à 2x ATR (plus de marge)
 min_position_risk: 15             # Risque minimal en devise par trade
+elo_enabled: true                 # Activer le ranking ELO
+elo_match_frequency: 1            # Match ELO chaque jour en mode continuous
+elo_matches_per_run: 3            # Plusieurs matches pour raffiner le ranking
 trend_analysis:
   enabled: true
   rsi_overbought: 70    # Plus strict: skip if RSI > 70

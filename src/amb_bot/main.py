@@ -400,6 +400,8 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
         # Morning scan (simulating 10:00 EST = 15:00 UTC)
         scan_hour = 15
         if settings.trading_start_hour_utc <= scan_hour < settings.trading_end_hour_utc:
+            # Refresh ELO rankings frequently in continuous mode
+            await strategy.run_elo_matches(broker)
             # 1. Check exits (stop-loss / take-profit)
             exits = await strategy.plan_exits(broker)
             exit_count = 0
