@@ -7,7 +7,6 @@ Type=simple
 User=amb
 WorkingDirectory=/home/amb
 Environment="DISPLAY=:99"
-ExecStartPre=/usr/bin/Xvfb :99 -screen 0 1024x768x24
 ExecStart=/home/amb/apps/AMB/AMB/deploy/start-ibgateway-ibc.sh
 Restart=on-failure
 RestartSec=30s
