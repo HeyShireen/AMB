@@ -42,6 +42,10 @@ class Strategy:
         self.last_elo_match = 0  # Track days since last match
         # Mean reversion stop tracking
         self.stop_levels: Dict[str, float] = {}
+        # Trailing stop: track highest price since entry
+        self.highest_prices: Dict[str, float] = {}
+        # Partial take-profit tracking
+        self.partial_taken: Dict[str, bool] = {}
 
     async def refresh_trust_levels(self, broker: BrokerClient) -> None:
         """Legacy hook no-op (exploration removed for mean reversion strategy)."""
@@ -338,7 +342,7 @@ class Strategy:
         return 'bull'  # Default to bull on error
     
     async def plan_buys(self, broker: BrokerClient) -> List[Decision]:
-        """DCA + opportunistic entries: buy monthly budget across top ELO-rated tickers."""
+        """DCA + momentum-weighted entries: buy top ELO-rated tickers with trend filter."""
         decisions: List[Decision] = []
 
         # Get available cash for position sizing
@@ -357,9 +361,11 @@ class Strategy:
         if not sorted_universe:
             return decisions
 
-        # Take top N tickers to invest in this month (diversification)
-        num_picks = min(3, len(sorted_universe))
-        budget_per_ticker = available_cash / num_picks
+        # If winners_only_mode, limit to top N
+        if getattr(self.settings, "elo_winners_only_mode", False):
+            winners_count = getattr(self.settings, "elo_winners_count", 5)
+            sorted_universe = sorted_universe[:winners_count]
+            logger.info(f"🏆 Winners-only mode: focusing on top {winners_count} by ELO")
 
         open_positions = await broker.list_positions()
         held_symbols = {p.symbol for p in open_positions}
@@ -370,39 +376,89 @@ class Strategy:
             pq = await broker.fetch_quote(p.symbol)
             portfolio_value += p.qty * pq.price
 
-        for symbol in sorted_universe[:num_picks * 2]:  # scan more to find valid ones
-            if len(decisions) >= num_picks:
-                break
-
-            # Skip if position is already large (> 20% of portfolio)
-            if symbol in held_symbols and portfolio_value > 0:
-                pos = next((p for p in open_positions if p.symbol == symbol), None)
-                if pos:
-                    quote = await broker.fetch_quote(symbol)
-                    pos_value = pos.qty * quote.price
-                    if pos_value / portfolio_value > 0.20:
-                        continue
-
+        # Calculate momentum scores for weighting
+        momentum_scores: Dict[str, float] = {}
+        valid_symbols: List[str] = []
+        
+        for symbol in sorted_universe:
             quote = await broker.fetch_quote(symbol)
             price = quote.price
             if price <= 0:
                 continue
-
-            # Optional: slight discount filter (buy if not at recent high)
-            history = await broker.fetch_historical(symbol, days=20)
-            if len(history) >= 5:
-                recent_high = max(history[-5:])
-                # Skip if price is at all-time high (wait for pullback)
-                if price >= recent_high * 0.995:
-                    # Still buy but reduce allocation
-                    budget_per_ticker *= 0.5
-
-            qty = budget_per_ticker / price
+                
+            history = await broker.fetch_historical(symbol, days=30)
+            if len(history) < 20:
+                continue
+            
+            indicators = self._compute_indicators(history)
+            
+            # === TREND FILTERS ===
+            # 1. RSI filter: skip if overbought
+            rsi = indicators.get("rsi14", 50)
+            rsi_overbought = getattr(self.settings, "rsi_overbought", 70)
+            if rsi > rsi_overbought:
+                logger.debug(f"⏭️ Skipping {symbol}: RSI={rsi:.0f} > {rsi_overbought}")
+                continue
+            
+            # 2. SMA trend filter: price should be above short SMA
+            sma20 = indicators.get("sma20", 0)
+            if sma20 > 0 and price < sma20 * 0.95:
+                logger.debug(f"⏭️ Skipping {symbol}: price below SMA20")
+                continue
+            
+            # 3. Momentum filter: require positive momentum
+            momentum_lookback = getattr(self.settings, "momentum_lookback", 20)
+            min_momentum = getattr(self.settings, "min_momentum", 0.02)
+            if len(history) >= momentum_lookback:
+                # Use first price in the lookback window (oldest)
+                base_price = history[0] if len(history) <= momentum_lookback else history[-momentum_lookback]
+                momentum = (price - base_price) / base_price if base_price > 0 else 0
+                if momentum < min_momentum:
+                    logger.debug(f"⏭️ Skipping {symbol}: momentum={momentum*100:.1f}% < {min_momentum*100:.0f}%")
+                    continue
+                momentum_scores[symbol] = max(0.1, momentum)  # Min score 0.1
+            else:
+                momentum_scores[symbol] = 0.1
+            
+            # 4. Skip if position is already large (> 15% of portfolio)
+            if symbol in held_symbols and portfolio_value > 0:
+                pos = next((p for p in open_positions if p.symbol == symbol), None)
+                if pos:
+                    pos_value = pos.qty * price
+                    if pos_value / portfolio_value > 0.15:
+                        logger.debug(f"⏭️ Skipping {symbol}: position too large ({pos_value/portfolio_value*100:.0f}%)")
+                        continue
+            
+            valid_symbols.append(symbol)
+        
+        if not valid_symbols:
+            logger.info("📊 No valid entry signals found this period")
+            return decisions
+        
+        # Allocate budget weighted by momentum
+        total_momentum = sum(momentum_scores.get(s, 0.1) for s in valid_symbols)
+        max_picks = min(getattr(self.settings, "max_positions", 8), len(valid_symbols))
+        
+        for symbol in valid_symbols[:max_picks]:
+            weight = momentum_scores.get(symbol, 0.1) / total_momentum if total_momentum > 0 else 1 / len(valid_symbols)
+            budget_for_symbol = available_cash * weight
+            
+            # Minimum allocation check
+            if budget_for_symbol < 20:
+                continue
+            
+            quote = await broker.fetch_quote(symbol)
+            price = quote.price
+            if price <= 0:
+                continue
+            
+            qty = budget_for_symbol / price
             qty = round(qty, 4)
-            if qty <= 0 or qty * price < 10:
+            if qty <= 0 or qty * price < 15:
                 continue
 
-            # Simple ATR-based stop (if available)
+            # ATR-based stop
+            history = await broker.fetch_historical(symbol, days=20)
             stop = None
             if len(history) >= 14:
                 indicators = self._compute_indicators(history)
@@ -414,18 +470,16 @@ class Strategy:
                 action="buy",
                 symbol=symbol,
                 qty=qty,
-                reason="dca_monthly",
+                reason=f"momentum_dca (mom={momentum_scores.get(symbol, 0)*100:.1f}%)",
                 limit_price=price,
                 stop_loss=stop,
             ))
-            logger.info(f"📈 DCA buy: {symbol} qty={qty:.4f} @ ${price:.2f}")
-
-        return decisions
+            logger.info(f"📈 Buy signal: {symbol} qty={qty:.4f} @ ${price:.2f} (momentum weight: {weight*100:.1f}%)")
 
         return decisions
 
     async def plan_exits(self, broker: BrokerClient) -> List[Decision]:
-        """Exit positions based on stop-loss or take-profit thresholds."""
+        """Exit positions based on stop-loss, take-profit, or trailing stop."""
         decisions: List[Decision] = []
         positions = await broker.list_positions()
 
@@ -436,22 +490,58 @@ class Strategy:
                 continue
 
             pnl_pct = (price - pos.avg_price) / pos.avg_price if pos.avg_price > 0 else 0
+            
+            # Update highest price for trailing stop (track the peak)
+            if pos.symbol not in self.highest_prices:
+                self.highest_prices[pos.symbol] = max(pos.avg_price, price)
+            elif price > self.highest_prices[pos.symbol]:
+                self.highest_prices[pos.symbol] = price
 
-            # Take profit at configured threshold (default 15%)
+            # 1. Full take-profit at configured threshold (default 20%)
             if pnl_pct >= self.settings.take_profit_pct:
                 logger.info(f"✅ Take-profit for {pos.symbol}: P&L={pnl_pct*100:.1f}%")
                 decisions.append(Decision(action="sell", symbol=pos.symbol, qty=pos.qty, reason="take_profit"))
+                self._cleanup_position_tracking(pos.symbol)
                 continue
 
-            # Stop-loss at configured threshold (default 7%)
+            # 2. Partial take-profit at +10% (sell 50%)
+            partial_tp_pct = getattr(self.settings, "partial_take_profit_pct", 0.10)
+            partial_tp_frac = getattr(self.settings, "partial_take_profit_frac", 0.5)
+            if pnl_pct >= partial_tp_pct and not self.partial_taken.get(pos.symbol, False):
+                sell_qty = pos.qty * partial_tp_frac
+                logger.info(f"📊 Partial TP for {pos.symbol}: P&L={pnl_pct*100:.1f}%, selling {partial_tp_frac*100:.0f}%")
+                decisions.append(Decision(action="sell", symbol=pos.symbol, qty=sell_qty, reason="partial_take_profit"))
+                self.partial_taken[pos.symbol] = True
+                continue
+
+            # 3. Trailing stop (activate after +8%, trail at 5% from high)
+            trailing_enabled = getattr(self.settings, "trailing_stop_enabled", True)
+            trailing_activation = getattr(self.settings, "trailing_stop_activation_pct", 0.08)
+            trailing_distance = getattr(self.settings, "trailing_stop_distance_pct", 0.05)
+            
+            if trailing_enabled and pnl_pct >= trailing_activation:
+                highest = self.highest_prices.get(pos.symbol, pos.avg_price)
+                trailing_stop_price = highest * (1 - trailing_distance)
+                if price <= trailing_stop_price:
+                    logger.info(f"📉 Trailing stop for {pos.symbol}: Price ${price:.2f} < trailing ${trailing_stop_price:.2f}")
+                    decisions.append(Decision(action="sell", symbol=pos.symbol, qty=pos.qty, reason="trailing_stop"))
+                    self._cleanup_position_tracking(pos.symbol)
+                    continue
+
+            # 4. Stop-loss at configured threshold (default 12%)
             if pnl_pct <= -self.settings.stop_loss_pct:
                 logger.info(f"🛑 Stop-loss for {pos.symbol}: P&L={pnl_pct*100:.1f}%")
                 decisions.append(Decision(action="sell", symbol=pos.symbol, qty=pos.qty, reason="stop_loss"))
+                self._cleanup_position_tracking(pos.symbol)
                 continue
 
         return decisions
-
-        return decisions
+    
+    def _cleanup_position_tracking(self, symbol: str) -> None:
+        """Clean up tracking data when position is closed."""
+        self.highest_prices.pop(symbol, None)
+        self.partial_taken.pop(symbol, None)
+        self.stop_levels.pop(symbol, None)
 
     async def plan_rebalance(self, broker: BrokerClient) -> List[Decision]:
         """Legacy hook disabled for mean-reversion strategy."""

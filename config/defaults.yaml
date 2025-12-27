@@ -1,16 +1,25 @@
 base_currency: EUR
 monthly_budget: 200
-stop_loss_pct: 0.07
-take_profit_pct: 0.25
-max_positions: 10
-risk_per_trade_pct: 0.01          # 1% du capital déployé par trade
-atr_stop_multiplier: 1.5          # Stop à 1.5x ATR
-min_position_risk: 10             # Risque minimal en devise par trade
+stop_loss_pct: 0.12               # Stop-loss plus large (12%) pour éviter whipsaws
+take_profit_pct: 0.20             # Take-profit à 20%
+partial_take_profit_pct: 0.10     # Prise de profit partielle à +10%
+partial_take_profit_frac: 0.5     # Vendre 50% de la position à +10%
+trailing_stop_enabled: true       # Activer trailing stop
+trailing_stop_activation_pct: 0.08  # Activer trailing après +8%
+trailing_stop_distance_pct: 0.05  # Trailing à 5% du plus haut
+max_positions: 8                  # Moins de positions = plus concentré
+risk_per_trade_pct: 0.02          # 2% du capital par trade (plus agressif)
+atr_stop_multiplier: 2.0          # Stop à 2x ATR (plus de marge)
+min_position_risk: 15             # Risque minimal en devise par trade
 trend_analysis:
   enabled: true
-  rsi_overbought: 75  # Skip if RSI > this
-  sma_short: 20       # Short moving average
-  sma_long: 50        # Long moving average
+  rsi_overbought: 70    # Plus strict: skip if RSI > 70
+  rsi_oversold: 35      # Bonus si RSI < 35 (oversold = bon point d'entrée)
+  sma_short: 10         # SMA court pour réactivité
+  sma_long: 30          # SMA long pour tendance
+  require_uptrend: true # N'acheter que si SMA10 > SMA30
+  momentum_lookback: 20 # Jours pour calcul momentum
+  min_momentum: 0.02    # Momentum min +2% sur 20 jours
 protections:
   use_limit_orders: false      # Use market orders for better fills
   limit_order_buffer: 0.005    # Max 0.5% above current price
@@ -78,26 +87,31 @@ exploration:
     - RIOT
 rebalance:
   enabled: true
-  winner_pct: 0.15           # Trim winners above +15% (let winners ride)
-  winner_sell_frac: 0.3      # Sell 30% of winners to preserve upside
-  loser_pct: -0.06           # Cut laggards below -6%
+  winner_pct: 0.12           # Trim winners above +12% (prendre profits plus tôt)
+  winner_sell_frac: 0.4      # Sell 40% of winners
+  loser_pct: -0.08           # Cut laggards below -8%
 elo:
   enabled: true                    # Enable ELO ranking for dynamic allocation
   initial_rating: 1500             # Initial rating for all tickers
-  k_factor: 32                      # ELO K-factor
-  match_frequency: 5                # Run matches every N days
-  matches_per_run: 1                # Number of matches to run each time
-  weighted_by_magnitude: false      # Weight ELO delta by P&L difference magnitude
-  multi_factor_scoring: true        # Risk-adjusted scoring (P&L + Sharpe + momentum + drawdown)
-  league_system: false              # Use league-based allocation (disabled - ELO weighting is better)
-  league_champions_pct: 0.60        # Budget % for top 3 (champions)
-  league_standard_pct: 0.30         # Budget % for middle tickers
-  league_relegation_pct: 0.10       # Budget % for bottom 3 (relegation zone)
-  glicko_enabled: false             # Use Glicko-2 instead of simple ELO
-  glicko_initial_rd: 350            # Initial rating deviation (uncertainty)
-  glicko_initial_volatility: 0.06   # Initial volatility
-  glicko_tau: 0.5                   # System constraint (controls volatility change)
-  winners_only_mode: false          # Invest ONLY in top N winners by rating
+  k_factor: 24                      # K-factor réduit pour stabilité
+  match_frequency: 3                # Run matches every 3 days (plus fréquent)
+  matches_per_run: 2                # 2 matches par run
+  weighted_by_magnitude: true       # Pondérer par magnitude du P&L
+  multi_factor_scoring: true        # Risk-adjusted scoring
+  momentum_weight: 0.35             # Poids du momentum dans le score
+  sharpe_weight: 0.25               # Poids du Sharpe ratio
+  drawdown_weight: 0.25             # Poids du drawdown (pénalité)
+  pnl_weight: 0.15                  # Poids du P&L brut
+  league_system: false              # Désactivé
+  league_champions_pct: 0.60
+  league_standard_pct: 0.30
+  league_relegation_pct: 0.10
+  glicko_enabled: false
+  glicko_initial_rd: 350
+  glicko_initial_volatility: 0.06
+  glicko_tau: 0.5
+  winners_only_mode: true           # ACTIVER: investir seulement dans les top performers
+  winners_count: 5                  # Top 5 par ELO rating
   winners_count: 3                  # Only buy top 3 tickers
   losers_only_mode: false           # Invest ONLY in bottom N losers (buy the dip)
   losers_count: 3                   # Only buy bottom 3 tickers
