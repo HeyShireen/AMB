@@ -1,0 +1,25 @@
+[Unit]
+Description=AMB Trading Bot - DCA Investment Automation
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amb
+Group=amb
+WorkingDirectory=/opt/amb-bot
+Environment="PATH=/opt/amb-bot/.venv/bin"
+EnvironmentFile=/opt/amb-bot/.env
+ExecStart=/opt/amb-bot/.venv/bin/python -m amb_bot.main once
+Restart=no
+StandardOutput=append:/opt/amb-bot/logs/amb-bot.log
+StandardError=append:/opt/amb-bot/logs/amb-bot-error.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/amb-bot
+
+[Install]
+WantedBy=multi-user.target
