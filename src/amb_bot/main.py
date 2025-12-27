@@ -310,79 +310,15 @@ def backtest(
     months: int = typer.Option(12, "--months", "-m", help="Number of months to backtest"),
     start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date (YYYY-MM-DD)"),
     initial_cash: float = typer.Option(10000.0, "--initial-cash", help="Initial cash balance"),
-    engine: str = typer.Option("ibkr", "--engine", help="Backtest engine: 'ibkr' (historical via IBKR) or 'fast' (offline synthetic)")
+    engine: str = typer.Option("ibkr", "--engine", help="Backtest engine: 'ibkr' (historical via IBKR) or 'fast' (offline synthetic)"),
+    continuous: bool = typer.Option(False, "--continuous", help="Enable continuous mode: scan for opportunities multiple times per month")
 ) -> None:
     """Run backtest on historical data."""
-    asyncio.run(run_backtest(months, start_date, initial_cash, engine))
+    asyncio.run(run_backtest(months, start_date, initial_cash, engine, continuous))
 
 
-async def run_backtest(months: int, start_date_str: Optional[str], initial_cash: float, engine: str) -> None:
-    """Execute backtest simulation."""
-    # Choose broker engine
-    use_fast = engine.lower() == "fast"
-    if use_fast:
-        from .broker.fast_backtest import FastBacktestBroker
-    else:
-        from .broker.backtest import BacktestBroker
-    
-    settings = get_settings()
-    # Disable time slicing in backtests to avoid long sleeps between batches
-    settings.time_slicing_enabled = False
-    settings.time_slicing_delay_minutes = 0
-    settings.time_slicing_batches = 1
-    
-    # Determine date range
-    if start_date_str:
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    else:
-        # Default: start N months ago
-        start_date = datetime.now() - timedelta(days=months * 30)
-    
-    end_date = start_date + timedelta(days=months * 30)
-    
-    console.print(f"[cyan]🔙 Starting backtest from {start_date.date()} to {end_date.date()}[/cyan]")
-    console.print(f"[cyan]💰 Initial capital: ${initial_cash:,.2f}[/cyan]")
-    console.print(f"[cyan]📅 Monthly budget: ${settings.monthly_budget}[/cyan]\n")
-    
-    # Create backtest broker
-    if use_fast:
-        broker = FastBacktestBroker(
-            start_date=start_date,
-            end_date=end_date,
-            initial_cash=initial_cash,
-            monthly_budget=settings.monthly_budget,
-        )
-        await broker.connect()
-        console.print("[green]✅ Using offline fast backtest engine (no IBKR required)")
-    else:
-        broker = BacktestBroker(
-            start_date=start_date,
-            end_date=end_date,
-            initial_cash=initial_cash,
-            ibkr_host=settings.ibkr_host,
-            ibkr_port=settings.ibkr_port,
-        )
-        await broker.connect()
-        console.print("[green]✅ Connected to IBKR for historical data[/green]")
-    
-    # Preload all tickers in parallel
-    # Preload/filter universe if using IBKR-backed historicals
-    if not use_fast:
-        await broker.preload_all_tickers(settings.universe)
-        # Filter universe to symbols that have data at the start date (skip pre-IPO)
-        available_universe = [s for s in settings.universe if broker.has_data_on_or_before(s, start_date)]
-        skipped = set(settings.universe) - set(available_universe)
-        missing_preload = getattr(broker, "missing_symbols", [])
-        if skipped:
-            console.print(f"[red]⚠️ {len(skipped)} symboles sans données à la date de départ : {', '.join(sorted(skipped))}[/red]")
-        if missing_preload:
-            console.print(f"[red]⚠️ Données historiques manquantes lors du preload pour : {', '.join(sorted(missing_preload))}[/red]")
-        settings.universe = available_universe
-        console.print()
-    
-    strategy = Strategy(settings)
-    
-    # Run simulation month by month
+async def _run_monthly_backtest(broker: BrokerClient, strategy: Strategy, settings, start_date, end_date, console) -> None:
+    """Classic monthly DCA backtest."""
     month_count = 0
     while broker.current_date < end_date:
         month_count += 1
@@ -431,6 +367,149 @@ async def run_backtest(months: int, start_date_str: Optional[str], initial_cash:
         # Advance to next month boundary
         broker.current_date = month_end
         broker.record_portfolio_snapshot()
+
+
+async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, budget_tracker: BudgetTracker, settings, start_date, end_date, console) -> None:
+    """Continuous mode backtest: scan daily during market hours."""
+    current_month = start_date.month
+    current_year = start_date.year
+    day_count = 0
+    total_trades = 0
+    
+    # Inject initial monthly budget
+    budget_tracker.reset_month()
+    
+    while broker.current_date < end_date:
+        day_count += 1
+        current_day = broker.current_date
+        
+        # Check if new month started -> reset budget
+        if current_day.month != current_month or current_day.year != current_year:
+            current_month = current_day.month
+            current_year = current_day.year
+            budget_tracker.reset_month()
+            console.print(f"\n[yellow]📆 New month: {current_day.strftime('%B %Y')}[/yellow]")
+        
+        # Skip weekends (rough approximation)
+        if current_day.weekday() >= 5:
+            broker.current_date += timedelta(days=1)
+            continue
+        
+        # Morning scan (simulating 10:00 EST = 15:00 UTC)
+        scan_hour = 15
+        if settings.trading_start_hour_utc <= scan_hour < settings.trading_end_hour_utc:
+            # 1. Check exits (stop-loss / take-profit)
+            exits = await strategy.plan_exits(broker)
+            exit_count = 0
+            for dec in exits:
+                res = await broker.place_order(dec.symbol, dec.qty, side="sell")
+                if res.qty > 0:
+                    exit_count += 1
+                    # Record sell trade in budget tracker
+                    trade = Trade(
+                        timestamp=current_day.isoformat(),
+                        symbol=res.symbol,
+                        side="sell",
+                        qty=res.qty,
+                        price=res.price,
+                        amount=res.qty * res.price,
+                        type=dec.reason
+                    )
+                    budget_tracker.record_trade(trade)
+            
+            if exit_count > 0:
+                console.print(f"  [blue]🔔 {current_day.date()} - Exits: {exit_count}[/blue]")
+            
+            # 2. Scan for buy opportunities
+            trades_executed = await scan_and_trade(broker, settings, budget_tracker)
+            total_trades += trades_executed
+            
+            if trades_executed > 0:
+                console.print(f"  [green]✅ {current_day.date()} - Buys: {trades_executed}[/green]")
+        
+        # Record daily portfolio snapshot
+        broker.record_portfolio_snapshot()
+        
+        # Advance to next day
+        broker.current_date += timedelta(days=1)
+    
+    console.print(f"\n[cyan]📊 Total trades executed: {total_trades}[/cyan]")
+
+
+async def run_backtest(months: int, start_date_str: Optional[str], initial_cash: float, engine: str, continuous: bool = False) -> None:
+    """Execute backtest simulation."""
+    # Choose broker engine
+    use_fast = engine.lower() == "fast"
+    if use_fast:
+        from .broker.fast_backtest import FastBacktestBroker
+    else:
+        from .broker.backtest import BacktestBroker
+    
+    settings = get_settings()
+    # Disable time slicing in backtests to avoid long sleeps between batches
+    settings.time_slicing_enabled = False
+    settings.time_slicing_delay_minutes = 0
+    settings.time_slicing_batches = 1
+    
+    # Determine date range
+    if start_date_str:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    else:
+        # Default: start N months ago
+        start_date = datetime.now() - timedelta(days=months * 30)
+    
+    end_date = start_date + timedelta(days=months * 30)
+    
+    console.print(f"[cyan]🔙 Starting backtest from {start_date.date()} to {end_date.date()}[/cyan]")
+    console.print(f"[cyan]💰 Initial capital: ${initial_cash:,.2f}[/cyan]")
+    console.print(f"[cyan]📅 Monthly budget: ${settings.monthly_budget}[/cyan]")
+    console.print(f"[cyan]🔄 Mode: {'Continuous (daily scans)' if continuous else 'Monthly DCA'}[/cyan]\n")
+    
+    # Create backtest broker
+    if use_fast:
+        broker = FastBacktestBroker(
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            monthly_budget=settings.monthly_budget,
+        )
+        await broker.connect()
+        console.print("[green]✅ Using offline fast backtest engine (no IBKR required)")
+    else:
+        broker = BacktestBroker(
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            ibkr_host=settings.ibkr_host,
+            ibkr_port=settings.ibkr_port,
+        )
+        await broker.connect()
+        console.print("[green]✅ Connected to IBKR for historical data[/green]")
+    
+    # Preload all tickers in parallel
+    # Preload/filter universe if using IBKR-backed historicals
+    if not use_fast:
+        await broker.preload_all_tickers(settings.universe)
+        # Filter universe to symbols that have data at the start date (skip pre-IPO)
+        available_universe = [s for s in settings.universe if broker.has_data_on_or_before(s, start_date)]
+        skipped = set(settings.universe) - set(available_universe)
+        missing_preload = getattr(broker, "missing_symbols", [])
+        if skipped:
+            console.print(f"[red]⚠️ {len(skipped)} symboles sans données à la date de départ : {', '.join(sorted(skipped))}[/red]")
+        if missing_preload:
+            console.print(f"[red]⚠️ Données historiques manquantes lors du preload pour : {', '.join(sorted(missing_preload))}[/red]")
+        settings.universe = available_universe
+        console.print()
+    
+    strategy = Strategy(settings)
+    budget_tracker = BudgetTracker(settings.monthly_budget)
+    
+    if continuous:
+        # Continuous mode: scan daily during market hours
+        await _run_continuous_backtest(broker, strategy, budget_tracker, settings, start_date, end_date, console)
+    else:
+        # Classic mode: monthly DCA
+        await _run_monthly_backtest(broker, strategy, settings, start_date, end_date, console)
     
     await broker.disconnect()
     

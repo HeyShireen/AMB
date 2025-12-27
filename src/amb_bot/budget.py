@@ -71,10 +71,15 @@ class BudgetTracker:
             logger.error(f"Error saving budget data: {e}")
     
     def _reset_month(self) -> None:
-        """Reset for new month."""
+        """Reset for new month (internal use)."""
         self.current_month = datetime.now().strftime("%Y-%m")
         self.monthly_spent = 0.0
         # Keep trades for history, but reset spending
+    
+    def reset_month(self) -> None:
+        """Public method to reset budget for new month (used in backtests)."""
+        self._reset_month()
+        self._save()
     
     def get_available_budget(self) -> float:
         """Get remaining budget for this month."""
