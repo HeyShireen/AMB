@@ -26,7 +26,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Config
-REPO="https://github.com/YOUR_USERNAME/AMB.git"  # ← CHANGE THIS
+REPO="https://github.com/HeyShireen/AMB.git"
 DEPLOY_PATH="/opt/amb-bot"
 PYTHON_VERSION="3.11"
 GATEWAY_USER="gateway"
