@@ -102,7 +102,8 @@ class Settings(BaseSettings):
 
     model_config = {
         "env_prefix": "",
-        "env_file": ".env"
+        "env_file": ".env",
+        "extra": "ignore",
     }
 
     @field_validator("stop_loss_pct", "take_profit_pct")
