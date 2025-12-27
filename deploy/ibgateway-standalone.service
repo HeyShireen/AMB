@@ -1,0 +1,22 @@
+[Unit]
+Description=Interactive Brokers Gateway (IBC)
+After=network.target
+
+[Service]
+Type=simple
+User=amb
+WorkingDirectory=/home/amb
+Environment="DISPLAY=:99"
+ExecStartPre=/usr/bin/Xvfb :99 -screen 0 1024x768x24
+ExecStart=/home/amb/apps/AMB/AMB/deploy/start-ibgateway-ibc.sh
+Restart=on-failure
+RestartSec=30s
+StandardOutput=journal
+StandardError=journal
+
+# Timeouts
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
