@@ -1,0 +1,107 @@
+base_currency: EUR
+monthly_budget: 200
+stop_loss_pct: 0.07
+take_profit_pct: 0.25
+max_positions: 10
+risk_per_trade_pct: 0.01          # 1% du capital déployé par trade
+atr_stop_multiplier: 1.5          # Stop à 1.5x ATR
+min_position_risk: 10             # Risque minimal en devise par trade
+trend_analysis:
+  enabled: true
+  rsi_overbought: 75  # Skip if RSI > this
+  sma_short: 20       # Short moving average
+  sma_long: 50        # Long moving average
+protections:
+  use_limit_orders: false      # Use market orders for better fills
+  limit_order_buffer: 0.005    # Max 0.5% above current price
+  volume_anomaly_threshold: 3.0  # Skip if volume > 3x average
+  time_slicing_enabled: true   # Split orders across time
+  time_slicing_batches: 3      # Number of batches
+  time_slicing_delay_minutes: 30  # Minutes between batches
+continuous_mode:
+  enabled: false               # Run continuously vs one-off
+  check_interval_minutes: 15   # Scan opportunities every N minutes
+  trading_hours:
+    start_hour_utc: 14         # 14:00 UTC = 9:00 EST = market open
+    end_hour_utc: 21           # 21:00 UTC = 16:00 EST = market close
+  opportunities:
+    detect_dips: true          # Buy on price dips
+    detect_breakouts: true     # Buy on breakouts
+    min_confidence: 0.6        # Only trade opportunities with confidence >= 0.6
+universe:
+  # US mega/large caps
+  - AAPL
+  - MSFT
+  - GOOGL
+  - NVDA
+  - META
+  - AMZN
+  - AVGO
+  - AMD
+  - TSLA
+  - NFLX
+  - COST
+  - CRM
+  - INTU
+  - LIN
+  # Semis & equipment
+  - ASML
+  - LRCX
+  # Europe blue chips
+  - SAP
+  - OR.PA
+  - AIR.PA
+  - MC.PA
+  - SU.PA      # Schneider Electric
+  - EN.PA      # Bouygues/Engie style infra/energy
+  - TTE        # TotalEnergies (ADR ticker)
+  - RNO.PA     # Renault (cyclical)
+  - SNY        # Sanofi ADR (avoid SAN.PA contract lookup issues)
+market_regime_filter_enabled: true          # Enable market regime detection
+market_regime_bear_allocation: 0.0          # 0% allocation during bear markets (stop buying)
+market_regime_sideways_allocation: 0.5      # 50% allocation during sideways markets
+exploration:
+  enabled: true
+  budget_pct: 0.50          # 50% du budget réservé aux explorations (aggressive)
+  max_level: 4              # 0 = pause, 1 = base, 4 = max sizing
+  pnl_up_threshold: 0.03    # +3% => level up (more frequent)
+  pnl_down_threshold: 0.06  # -6% => level down/pause
+  candidates:
+    - PYPL
+    - NOW
+    - COIN
+    - MSTR
+    - DKNG
+    - PLTR
+    - SHOP
+    - RBLX
+    - RIOT
+rebalance:
+  enabled: true
+  winner_pct: 0.15           # Trim winners above +15% (let winners ride)
+  winner_sell_frac: 0.3      # Sell 30% of winners to preserve upside
+  loser_pct: -0.06           # Cut laggards below -6%
+elo:
+  enabled: true                    # Enable ELO ranking for dynamic allocation
+  initial_rating: 1500             # Initial rating for all tickers
+  k_factor: 32                      # ELO K-factor
+  match_frequency: 5                # Run matches every N days
+  matches_per_run: 1                # Number of matches to run each time
+  weighted_by_magnitude: false      # Weight ELO delta by P&L difference magnitude
+  multi_factor_scoring: true        # Risk-adjusted scoring (P&L + Sharpe + momentum + drawdown)
+  league_system: false              # Use league-based allocation (disabled - ELO weighting is better)
+  league_champions_pct: 0.60        # Budget % for top 3 (champions)
+  league_standard_pct: 0.30         # Budget % for middle tickers
+  league_relegation_pct: 0.10       # Budget % for bottom 3 (relegation zone)
+  glicko_enabled: false             # Use Glicko-2 instead of simple ELO
+  glicko_initial_rd: 350            # Initial rating deviation (uncertainty)
+  glicko_initial_volatility: 0.06   # Initial volatility
+  glicko_tau: 0.5                   # System constraint (controls volatility change)
+  winners_only_mode: false          # Invest ONLY in top N winners by rating
+  winners_count: 3                  # Only buy top 3 tickers
+  losers_only_mode: false           # Invest ONLY in bottom N losers (buy the dip)
+  losers_count: 3                   # Only buy bottom 3 tickers
+  cron: "0 7 1 * *"                # first day of month at 07:00
+  timezone: "Europe/Paris"
+logging:
+  level: INFO
