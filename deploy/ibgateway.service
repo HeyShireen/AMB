@@ -1,0 +1,17 @@
+[Unit]
+Description=IB Gateway (Headless via IBC)
+After=network.target
+
+[Service]
+Type=simple
+User=amb
+# Headless display for IB Gateway
+Environment="DISPLAY=:1"
+ExecStartPre=/usr/bin/Xvfb :1 -screen 0 1024x768x24
+# IBC start script; reads /opt/ibc/config.ini
+ExecStart=/opt/ibc/scripts/ibcstart.sh -g
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -310,14 +310,20 @@ def backtest(
     months: int = typer.Option(12, "--months", "-m", help="Number of months to backtest"),
     start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date (YYYY-MM-DD)"),
     initial_cash: float = typer.Option(10000.0, "--initial-cash", help="Initial cash balance"),
+    engine: str = typer.Option("ibkr", "--engine", help="Backtest engine: 'ibkr' (historical via IBKR) or 'fast' (offline synthetic)")
 ) -> None:
     """Run backtest on historical data."""
-    asyncio.run(run_backtest(months, start_date, initial_cash))
+    asyncio.run(run_backtest(months, start_date, initial_cash, engine))
 
 
-async def run_backtest(months: int, start_date_str: Optional[str], initial_cash: float) -> None:
+async def run_backtest(months: int, start_date_str: Optional[str], initial_cash: float, engine: str) -> None:
     """Execute backtest simulation."""
-    from .broker.backtest import BacktestBroker
+    # Choose broker engine
+    use_fast = engine.lower() == "fast"
+    if use_fast:
+        from .broker.fast_backtest import FastBacktestBroker
+    else:
+        from .broker.backtest import BacktestBroker
     
     settings = get_settings()
     # Disable time slicing in backtests to avoid long sleeps between batches
@@ -339,29 +345,40 @@ async def run_backtest(months: int, start_date_str: Optional[str], initial_cash:
     console.print(f"[cyan]📅 Monthly budget: ${settings.monthly_budget}[/cyan]\n")
     
     # Create backtest broker
-    broker = BacktestBroker(
-        start_date=start_date,
-        end_date=end_date,
-        initial_cash=initial_cash,
-        ibkr_host=settings.ibkr_host,
-        ibkr_port=settings.ibkr_port,
-    )
-    
-    await broker.connect()
-    console.print("[green]✅ Connected to IBKR for historical data[/green]")
+    if use_fast:
+        broker = FastBacktestBroker(
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            monthly_budget=settings.monthly_budget,
+        )
+        await broker.connect()
+        console.print("[green]✅ Using offline fast backtest engine (no IBKR required)")
+    else:
+        broker = BacktestBroker(
+            start_date=start_date,
+            end_date=end_date,
+            initial_cash=initial_cash,
+            ibkr_host=settings.ibkr_host,
+            ibkr_port=settings.ibkr_port,
+        )
+        await broker.connect()
+        console.print("[green]✅ Connected to IBKR for historical data[/green]")
     
     # Preload all tickers in parallel
-    await broker.preload_all_tickers(settings.universe)
-    # Filter universe to symbols that have data at the start date (skip pre-IPO)
-    available_universe = [s for s in settings.universe if broker.has_data_on_or_before(s, start_date)]
-    skipped = set(settings.universe) - set(available_universe)
-    missing_preload = getattr(broker, "missing_symbols", [])
-    if skipped:
-        console.print(f"[red]⚠️ {len(skipped)} symboles sans données à la date de départ : {', '.join(sorted(skipped))}[/red]")
-    if missing_preload:
-        console.print(f"[red]⚠️ Données historiques manquantes lors du preload pour : {', '.join(sorted(missing_preload))}[/red]")
-    settings.universe = available_universe
-    console.print()
+    # Preload/filter universe if using IBKR-backed historicals
+    if not use_fast:
+        await broker.preload_all_tickers(settings.universe)
+        # Filter universe to symbols that have data at the start date (skip pre-IPO)
+        available_universe = [s for s in settings.universe if broker.has_data_on_or_before(s, start_date)]
+        skipped = set(settings.universe) - set(available_universe)
+        missing_preload = getattr(broker, "missing_symbols", [])
+        if skipped:
+            console.print(f"[red]⚠️ {len(skipped)} symboles sans données à la date de départ : {', '.join(sorted(skipped))}[/red]")
+        if missing_preload:
+            console.print(f"[red]⚠️ Données historiques manquantes lors du preload pour : {', '.join(sorted(missing_preload))}[/red]")
+        settings.universe = available_universe
+        console.print()
     
     strategy = Strategy(settings)
     
