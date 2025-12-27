@@ -30,6 +30,24 @@ if [ "$EUID" -ne 0 ]; then
    exit 1
 fi
 
+# Detect OS
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+else
+    echo -e "${RED}Cannot detect OS${NC}"
+    exit 1
+fi
+
+echo "Detected OS: $OS"
+
+# Install X11/Xvfb based on OS
+if [ "$OS" = "debian" ] || [ "$OS" = "ubuntu" ]; then
+    apt install -y xvfb x11-utils
+elif [ "$OS" = "almalinux" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ]; then
+    dnf install -y xorg-x11-server-Xvfb xorg-x11-utils
+fi
+
 # Step 1: Create gateway user if doesn't exist
 echo -e "\n${BLUE}[1/4]${NC} Setting up gateway user..."
 if ! id "$GATEWAY_USER" &>/dev/null; then

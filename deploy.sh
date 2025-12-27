@@ -35,22 +35,55 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${BLUE}   🚀 AMB Bot - Vultr Deployment${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
 
+# Detect OS
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+else
+    echo -e "${RED}Cannot detect OS${NC}"
+    exit 1
+fi
+
+echo "Detected OS: $OS"
+
 # Step 1: Update system
 echo -e "\n${BLUE}[1/7]${NC} Updating system packages..."
-apt update -y
-apt upgrade -y
-apt install -y curl wget git
 
-# Step 2: Install Python 3.11 and dependencies
-echo -e "\n${BLUE}[2/7]${NC} Installing Python ${PYTHON_VERSION} and build tools..."
-apt install -y software-properties-common
-add-apt-repository ppa:deadsnakes/ppa -y
-apt update -y
-apt install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
-    build-essential libssl-dev libffi-dev
+if [ "$OS" = "debian" ] || [ "$OS" = "ubuntu" ]; then
+    apt update -y
+    apt upgrade -y
+    apt install -y curl wget git
+    
+    # Step 2: Install Python 3.11 and dependencies (Debian/Ubuntu)
+    echo -e "\n${BLUE}[2/7]${NC} Installing Python ${PYTHON_VERSION} and build tools..."
+    apt install -y software-properties-common
+    add-apt-repository ppa:deadsnakes/ppa -y
+    apt update -y
+    apt install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-dev \
+        build-essential libssl-dev libffi-dev
+    
+    # Set python3.11 as default
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
 
-# Set python3.11 as default
-update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+elif [ "$OS" = "almalinux" ] || [ "$OS" = "rhel" ] || [ "$OS" = "centos" ]; then
+    dnf update -y
+    dnf install -y curl wget git
+    
+    # Step 2: Install Python 3.11 and dependencies (AlmaLinux/RHEL)
+    echo -e "\n${BLUE}[2/7]${NC} Installing Python ${PYTHON_VERSION} and build tools..."
+    dnf install -y gcc make openssl-devel bzip2-devel libffi-devel zlib-devel
+    dnf groupinstall -y "Development Tools"
+    
+    # Install Python 3.11 from AppStream or compile
+    dnf install -y python3.11 python3.11-devel
+    
+    # Set python3.11 as default
+    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+else
+    echo -e "${RED}Unsupported OS: $OS${NC}"
+    exit 1
+fi
 
 # Step 3: Install Poetry
 echo -e "\n${BLUE}[3/7]${NC} Installing Poetry..."
