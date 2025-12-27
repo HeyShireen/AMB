@@ -432,8 +432,16 @@ class Strategy:
             valid_symbols.append(symbol)
         
         if not valid_symbols:
-            logger.info("📊 No valid entry signals found this period")
-            return decisions
+            # Fallback: if filters are too strict and no symbols qualify,
+            # perform a conservative DCA across top N ELO names so we don't skip the month.
+            fallback_count = min(3, len(sorted_universe))
+            if fallback_count == 0:
+                logger.info("📊 No valid entry signals and no universe available")
+                return decisions
+            logger.info(f"📊 No valid signals -> fallback DCA across top {fallback_count} tickers")
+            valid_symbols = sorted_universe[:fallback_count]
+            for s in valid_symbols:
+                momentum_scores[s] = 1.0  # equal weights in fallback
         
         # Allocate budget weighted by momentum
         total_momentum = sum(momentum_scores.get(s, 0.1) for s in valid_symbols)

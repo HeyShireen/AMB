@@ -63,6 +63,8 @@ def calculate_performance_metrics(
     
     # Calculate realized PnL
     realized_pnl = sum(t.get("pnl", 0) for t in trade_history if "pnl" in t)
+    # Derive unrealized PnL as the remainder of net profit
+    unrealized_pnl = net_profit - realized_pnl
     
     # Win rate (for trades with PnL)
     winning_trades = sum(1 for t in trade_history if t.get("pnl", 0) > 0)
@@ -112,6 +114,7 @@ def calculate_performance_metrics(
         "total_contributed": total_contributed,
         "total_buy_volume": total_buy_volume,
         "net_profit": net_profit,
+        "unrealized_pnl": unrealized_pnl,
         "total_return_pct": total_return,
         "max_drawdown_pct": max_drawdown,
         "total_trades": total_trades,
@@ -156,6 +159,7 @@ def print_backtest_results(
     summary.add_row("Net Profit", f"${metrics['net_profit']:,.2f}")
     summary.add_row("Total Return", f"{metrics['total_return_pct']:.2f}%")
     summary.add_row("Realized P&L", f"${metrics['realized_pnl']:,.2f}")
+    summary.add_row("Unrealized P&L (derived)", f"${metrics.get('unrealized_pnl', 0):,.2f}")
     summary.add_row("Max Drawdown", f"{metrics['max_drawdown_pct']:.2f}%")
     summary.add_row("", "")
     summary.add_row("Total Trades", str(metrics['total_trades']))
