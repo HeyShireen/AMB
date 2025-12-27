@@ -5,13 +5,12 @@ After=network.target
 [Service]
 Type=simple
 User=amb
-# Headless display for IB Gateway
 Environment="DISPLAY=:1"
-ExecStartPre=/usr/bin/Xvfb :1 -screen 0 1024x768x24
-# IBC start script; reads /opt/ibc/config.ini
-ExecStart=/opt/ibc/scripts/ibcstart.sh -g
+# Use wrapper script to start Xvfb in background + IBC
+ExecStart=/opt/amb-bot/deploy/start-ibgateway.sh
 Restart=always
 RestartSec=60
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target
