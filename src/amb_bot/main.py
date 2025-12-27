@@ -378,17 +378,19 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
     
     # Inject initial monthly budget
     budget_tracker.reset_month()
+    broker.cash += settings.monthly_budget
     
     while broker.current_date < end_date:
         day_count += 1
         current_day = broker.current_date
         
-        # Check if new month started -> reset budget
+        # Check if new month started -> add new monthly budget
         if current_day.month != current_month or current_day.year != current_year:
             current_month = current_day.month
             current_year = current_day.year
             budget_tracker.reset_month()
-            console.print(f"\n[yellow]📆 New month: {current_day.strftime('%B %Y')}[/yellow]")
+            broker.cash += settings.monthly_budget
+            console.print(f"\n[yellow]📆 New month: {current_day.strftime('%B %Y')} - Added ${settings.monthly_budget} budget[/yellow]")
         
         # Skip weekends (rough approximation)
         if current_day.weekday() >= 5:
@@ -405,6 +407,7 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
                 res = await broker.place_order(dec.symbol, dec.qty, side="sell")
                 if res.qty > 0:
                     exit_count += 1
+                    total_trades += 1
                     # Record sell trade in budget tracker
                     trade = Trade(
                         timestamp=current_day.isoformat(),
@@ -420,12 +423,38 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
             if exit_count > 0:
                 console.print(f"  [blue]🔔 {current_day.date()} - Exits: {exit_count}[/blue]")
             
-            # 2. Scan for buy opportunities
-            trades_executed = await scan_and_trade(broker, settings, budget_tracker)
-            total_trades += trades_executed
-            
-            if trades_executed > 0:
-                console.print(f"  [green]✅ {current_day.date()} - Buys: {trades_executed}[/green]")
+            # 2. Check if we have enough cash to buy
+            available_cash = budget_tracker.get_available_budget()
+            if available_cash >= 20 and broker.cash >= 20:
+                # Use strategy to plan buys (normal DCA/momentum strategy)
+                buy_decisions = await strategy.plan_buys(broker)
+                buy_count = 0
+                
+                for dec in buy_decisions:
+                    # Check if budget allows
+                    cost = dec.qty * dec.limit_price if dec.limit_price else dec.qty * (await broker.fetch_quote(dec.symbol)).price
+                    if cost > available_cash:
+                        continue
+                    
+                    res = await broker.place_order(dec.symbol, dec.qty, side="buy", limit_price=dec.limit_price if dec.limit_price > 0 else None)
+                    if res.qty > 0:
+                        buy_count += 1
+                        total_trades += 1
+                        # Record buy trade
+                        trade = Trade(
+                            timestamp=current_day.isoformat(),
+                            symbol=res.symbol,
+                            side="buy",
+                            qty=res.qty,
+                            price=res.price,
+                            amount=res.qty * res.price,
+                            type=dec.reason
+                        )
+                        budget_tracker.record_trade(trade)
+                        available_cash -= res.qty * res.price
+                
+                if buy_count > 0:
+                    console.print(f"  [green]✅ {current_day.date()} - Buys: {buy_count}[/green]")
         
         # Record daily portfolio snapshot
         broker.record_portfolio_snapshot()
