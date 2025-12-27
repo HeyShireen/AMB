@@ -423,17 +423,20 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
             if exit_count > 0:
                 console.print(f"  [blue]🔔 {current_day.date()} - Exits: {exit_count}[/blue]")
             
-            # 2. Check if we have enough cash to buy
-            available_cash = budget_tracker.get_available_budget()
-            if available_cash >= 20 and broker.cash >= 20:
+            # 2. Check if we have enough cash to buy (at least once per week)
+            if broker.cash >= 50 and day_count % 5 == 1:  # Scan every 5 days
                 # Use strategy to plan buys (normal DCA/momentum strategy)
                 buy_decisions = await strategy.plan_buys(broker)
                 buy_count = 0
                 
+                if not buy_decisions:
+                    console.print(f"  [dim]{current_day.date()} - No buy signals (cash: ${broker.cash:.0f})[/dim]")
+                
                 for dec in buy_decisions:
-                    # Check if budget allows
-                    cost = dec.qty * dec.limit_price if dec.limit_price else dec.qty * (await broker.fetch_quote(dec.symbol)).price
-                    if cost > available_cash:
+                    # Check if we have cash
+                    quote = await broker.fetch_quote(dec.symbol)
+                    cost = dec.qty * quote.price
+                    if cost > broker.cash:
                         continue
                     
                     res = await broker.place_order(dec.symbol, dec.qty, side="buy", limit_price=dec.limit_price if dec.limit_price > 0 else None)
@@ -451,7 +454,6 @@ async def _run_continuous_backtest(broker: BrokerClient, strategy: Strategy, bud
                             type=dec.reason
                         )
                         budget_tracker.record_trade(trade)
-                        available_cash -= res.qty * res.price
                 
                 if buy_count > 0:
                     console.print(f"  [green]✅ {current_day.date()} - Buys: {buy_count}[/green]")
