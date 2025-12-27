@@ -92,7 +92,7 @@ class Settings(BaseSettings):
         description="Base URL for live broker APIs (set via env BROKER_BASE_URL)",
         alias="BROKER_BASE_URL",
     )
-    broker_type: str = Field("paper", description="Broker: paper or ibkr")
+    broker_type: str = Field("ibkr", description="Broker: ibkr (only IBKR API supported)")
     ibkr_host: str = Field("127.0.0.1", description="IBKR TWS/Gateway host")
     ibkr_port: int = Field(7497, description="IBKR port (7497=TWS paper, 4002=Gateway paper)")
     ibkr_client_id: int = Field(1, description="IBKR client ID")
