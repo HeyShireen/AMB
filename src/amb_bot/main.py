@@ -4,6 +4,7 @@ AMB DCA Bot - Simplified CLI for IBKR paper trading and testing.
 Simple commands:
   amb-bot once       : Run single DCA + exit check (for cron jobs)
   amb-bot simulate N : Run N monthly cycles with IBKR paper
+  amb-bot monitor    : Live monitoring with real-time P&L and positions
 """
 import asyncio
 import logging
@@ -182,6 +183,31 @@ def status() -> None:
     table.add_row("Total Sold", f"{summary['total_sold']:.2f}€")
 
     console.print(table)
+
+
+@app.command()
+def monitor(
+    refresh: int = typer.Option(5, "--refresh", "-r", help="Refresh interval in seconds")
+) -> None:
+    """Live monitoring with real-time P&L and positions."""
+    async def _monitor():
+        from .monitor import LiveMonitor
+        
+        settings = get_settings()
+        logging.basicConfig(
+            level=logging.WARNING,  # Reduce noise in monitor
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        
+        broker = get_broker(settings)
+        monitor_instance = LiveMonitor(broker, settings)
+        
+        console.print("[cyan]🔄 Starting live monitor...[/cyan]")
+        console.print(f"[dim]Refreshing every {refresh} seconds. Press Ctrl+C to stop.[/dim]\n")
+        
+        await monitor_instance.run(refresh_interval=refresh)
+    
+    asyncio.run(_monitor())
 
 
 if __name__ == "__main__":

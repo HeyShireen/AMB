@@ -153,9 +153,8 @@ class Strategy:
         # Phase 2: Entries (DCA)
         logger.info("\n📈 Phase 2: Processing entries (DCA)...")
         
-        # Get available budget
-        portfolio = await broker.get_portfolio()
-        budget_available = portfolio.cash if hasattr(portfolio, 'cash') else self.settings.monthly_budget
+        # Use configured monthly budget for DCA allocation
+        budget_available = self.settings.monthly_budget
         logger.info(f"   Available budget: {budget_available:.2f}€")
 
         entries = await self.plan_entries(broker, budget_available)
