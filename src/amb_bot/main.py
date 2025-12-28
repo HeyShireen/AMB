@@ -16,7 +16,7 @@ from rich.table import Table
 
 from .broker.base import BrokerClient
 from .config import get_settings
-from .strategy_clean import Strategy
+from .strategy import Strategy
 from .budget import BudgetTracker, Trade
 
 app = typer.Typer(help="AMB DCA Bot - Monthly DCA with 10% SL / 15% TP")

@@ -26,6 +26,14 @@ class OrderResult:
 
 
 class BrokerClient(ABC):
+    async def connect(self) -> None:
+        """Optional: Connect to broker API. Override if needed."""
+        pass
+    
+    async def disconnect(self) -> None:
+        """Optional: Disconnect from broker API. Override if needed."""
+        pass
+    
     @abstractmethod
     async def fetch_quote(self, symbol: str) -> Quote:
         raise NotImplementedError
